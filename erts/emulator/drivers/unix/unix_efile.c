@@ -669,18 +669,20 @@ efile_openfile(Efile_error* errInfo,	/* Where to return error codes. */
 	 */
 	static ino_t dev_null_ino = 0;
 
-	if (dev_null_ino == 0) {
+	if ((flags && EFILE_DEVICE) == 0) {
+	  if (dev_null_ino == 0) {
 	    struct stat nullstatbuf;
 	    
 	    if (stat("/dev/null", &nullstatbuf) >= 0) {
-		dev_null_ino = nullstatbuf.st_ino;
+	      dev_null_ino = nullstatbuf.st_ino;
 	    }
-	}
-	if (!(dev_null_ino && statbuf.st_ino == dev_null_ino)) {
+	  }
+	  if (!(dev_null_ino && statbuf.st_ino == dev_null_ino)) {
 #endif
 	    errno = EISDIR;
 	    return check_error(-1, errInfo);
 #if !defined(VXWORKS) && !defined(OSE)
+	  }
 	}
 #endif
     }

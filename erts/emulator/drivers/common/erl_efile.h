@@ -34,6 +34,7 @@
 #define EFILE_COMPRESSED 	8
 #define EFILE_MODE_EXCL        16
 #define EFILE_NO_TRUNCATE      32 /* Special for reopening on VxWorks */
+#define EFILE_DEVICE           64 /* To allow for reading device files
 
 /*
  * Seek modes for efile_seek().
