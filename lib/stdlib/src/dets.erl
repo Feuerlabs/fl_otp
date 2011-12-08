@@ -159,7 +159,8 @@
           auto_save,
           access,
           version,
-          debug
+          debug,
+	  file_opts = []
          }).
 
 -define(PATTERN_TO_OBJECT_MATCH_SPEC(Pat), [{Pat,[],['$_']}]).
@@ -638,7 +639,8 @@ open_file(File) ->
                 | {'ram_file', boolean()}
                 | {'repair', boolean() | 'force'}
                 | {'type', type()}
-                | {'version', version()},
+                | {'version', version()}
+		| {'file_opts', [term()]},
       Reason :: term().
 
 open_file(Tab, Args) when is_list(Args) ->
@@ -1144,6 +1146,8 @@ repl({debug, Bool}, Defs) ->
     %% Not documented.
     mem(Bool, [true, false]),
     Defs#open_args{debug = Bool};
+repl({file_opts, Opts}, Defs) when is_list(Opts) ->
+    Defs#open_args{file_opts = Opts};
 repl({_, _}, _) ->
     exit(badarg).
 
@@ -1756,6 +1760,9 @@ system_code_change(State, _Module, _OldVsn, _Extra) ->
 
 %% -> {ok, Fd, fileheader()} | throw(Error)
 read_file_header(FileName, Access, RamFile) ->
+    read_file_header(FileName, Access, RamFile, []).
+
+read_file_header(FileName, Access, RamFile, FileOpts) ->
     BF = if
 	     RamFile ->
 		 case file:read_file(FileName) of
@@ -1765,7 +1772,7 @@ read_file_header(FileName, Access, RamFile) ->
 	     true ->
 		 FileName
 	 end,
-    {ok, Fd} = dets_utils:open(BF, open_args(Access, RamFile)),
+    {ok, Fd} = dets_utils:open(BF, FileOpts ++ open_args(Access, RamFile)),
     {ok, <<Version:32>>} = 
         dets_utils:pread_close(Fd, FileName, ?FILE_FORMAT_VERSION_POS, 4),
     if 
@@ -2466,7 +2473,7 @@ fopen2(Fname, Tab) ->
 	    Acc = read_write,
 	    Ram = false, 
 	    %% Fd is not always closed upon error, but exit is soon called.
-	    {ok, Fd, FH} = read_file_header(Fname, Acc, Ram),
+	    {ok, Fd, FH} = read_file_header(Fname, Acc, Ram, []),
             Mod = FH#fileheader.mod,
             Do = case Mod:check_file_header(FH, Fd) of
                      {ok, Head1, ExtraInfo} ->
@@ -2519,10 +2526,10 @@ fopen_existing_file(Tab, OpenArgs) ->
     #open_args{file = Fname, type = Type, keypos = Kp, repair = Rep,
                min_no_slots = MinSlots, max_no_slots = MaxSlots,
                ram_file = Ram, delayed_write = CacheSz, auto_save =
-               Auto, access = Acc, version = Version, debug = Debug} =
-        OpenArgs,
+               Auto, access = Acc, version = Version, debug = Debug,
+	       file_opts = FileOpts} = OpenArgs,
     %% Fd is not always closed upon error, but exit is soon called.
-    {ok, Fd, FH} = read_file_header(Fname, Acc, Ram),
+    {ok, Fd, FH} = read_file_header(Fname, Acc, Ram, FileOpts),
     V9 = (Version =:= 9) or (Version =:= default),
     MinF = (MinSlots =:= default) or (MinSlots =:= FH#fileheader.min_no_slots),
     MaxF = (MaxSlots =:= default) or (MaxSlots =:= FH#fileheader.max_no_slots),
@@ -2591,7 +2598,7 @@ fopen_existing_file(Tab, OpenArgs) ->
                     dets_utils:stop_disk_map(),
 		    io:format(user, "dets: compaction of file ~p failed, "
 			      "now repairing ...~n", [Fname]),
-                    {ok, Fd2, _FH} = read_file_header(Fname, Acc, Ram),
+                    {ok, Fd2, _FH} = read_file_header(Fname, Acc, Ram, FileOpts),
                     do_repair(Fd2, Tab, Fname, FH, MinSlots, MaxSlots, 
 			      Version, OpenArgs)
 	    end;
@@ -2607,7 +2614,7 @@ fopen_existing_file(Tab, OpenArgs) ->
     end.
 
 do_repair(Fd, Tab, Fname, FH, MinSlots, MaxSlots, Version, OpenArgs) ->
-    case fsck(Fd, Tab, Fname, FH, MinSlots, MaxSlots, Version) of
+    case fsck(Fd, Tab, Fname, FH, MinSlots, MaxSlots, Version, OpenArgs) of
 	ok ->
 	    %% No need to update 'version'.
 	    erlang:garbage_collect(),
@@ -2633,14 +2640,15 @@ fopen_init_file(Tab, OpenArgs) ->
     #open_args{file = Fname, type = Type, keypos = Kp, 
                min_no_slots = MinSlotsArg, max_no_slots = MaxSlotsArg, 
 	       ram_file = Ram, delayed_write = CacheSz, auto_save = Auto, 
-               version = UseVersion, debug = Debug} = OpenArgs,
+               version = UseVersion, debug = Debug,
+	       file_opts = FileOpts} = OpenArgs,
     MinSlots = choose_no_slots(MinSlotsArg, ?DEFAULT_MIN_NO_SLOTS),
     MaxSlots = choose_no_slots(MaxSlotsArg, ?DEFAULT_MAX_NO_SLOTS),
     FileSpec = if
 		   Ram -> [];
 		   true -> Fname
 	       end,
-    {ok, Fd} = dets_utils:open(FileSpec, open_args(read_write, Ram)),
+    {ok, Fd} = dets_utils:open(FileSpec, FileOpts ++ open_args(read_write, Ram)),
     Version = if
                   UseVersion =:= default ->
                       case os:getenv("DETS_USE_FILE_FORMAT") of
@@ -2745,6 +2753,9 @@ compact(SourceHead) ->
 %% -> ok | Error
 %% Closes Fd.
 fsck(Fd, Tab, Fname, FH, MinSlotsArg, MaxSlotsArg, Version) ->
+    fsck(Fd, Tab, Fname, FH, MinSlotsArg, MaxSlotsArg, Version, #open_args{}).
+
+fsck(Fd, Tab, Fname, FH, MinSlotsArg, MaxSlotsArg, Version, OpenArgs) ->
     %% MinSlots and MaxSlots are the option values.
     #fileheader{min_no_slots = MinSlotsFile, 
                 max_no_slots = MaxSlotsFile} = FH,
@@ -2757,10 +2768,11 @@ fsck(Fd, Tab, Fname, FH, MinSlotsArg, MaxSlotsArg, Version) ->
     %% If the number of objects (keys) turns out to be significantly
     %% different from NoSlots, we try again with the correct number of
     %% objects (keys).
-    case fsck_try(Fd, Tab, FH, Fname, SlotNumbers, Version) of
+    case fsck_try(Fd, Tab, FH, Fname, SlotNumbers, Version, OpenArgs) of
         {try_again, BetterNoSlots} ->
 	    BetterSlotNumbers = {MinSlots, BetterNoSlots, MaxSlots},
-            case fsck_try(Fd, Tab, FH, Fname, BetterSlotNumbers, Version) of
+            case fsck_try(Fd, Tab, FH, Fname, BetterSlotNumbers,
+			  Version, OpenArgs) of
                 {try_again, _} ->
                     file:close(Fd),
                     {error, {cannot_repair, Fname}};
@@ -2779,16 +2791,17 @@ choose_no_slots(NoSlots, _) -> NoSlots.
 %% Initiating a table using a fun and repairing (or converting) a
 %% file are completely different things, but nevertheless the same
 %% method is used in both cases...
-fsck_try(Fd, Tab, FH, Fname, SlotNumbers, Version) ->
+fsck_try(Fd, Tab, FH, Fname, SlotNumbers, Version, OpenArgs0) ->
     Tmp = tempfile(Fname),
     #fileheader{type = Type, keypos = KeyPos} = FH,
     {_MinSlots, EstNoSlots, MaxSlots} = SlotNumbers,
-    OpenArgs = #open_args{file = Tmp, type = Type, keypos = KeyPos, 
-                          repair = false, min_no_slots = EstNoSlots,
-			  max_no_slots = MaxSlots,
-                          ram_file = false, delayed_write = ?DEFAULT_CACHE,
-                          auto_save = infinity, access = read_write,
-                          version = Version, debug = false},
+    OpenArgs = OpenArgs0#open_args{
+		 file = Tmp, type = Type, keypos = KeyPos,
+		 repair = false, min_no_slots = EstNoSlots,
+		 max_no_slots = MaxSlots,
+		 ram_file = false, delayed_write = ?DEFAULT_CACHE,
+		 auto_save = infinity, access = read_write,
+		 version = Version, debug = false},
     case catch fopen3(Tab, OpenArgs) of
 	{ok, Head} ->
             case fsck_try_est(Head, Fd, Fname, SlotNumbers, FH) of
