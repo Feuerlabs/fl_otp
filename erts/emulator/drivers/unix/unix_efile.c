@@ -669,7 +669,7 @@ efile_openfile(Efile_error* errInfo,	/* Where to return error codes. */
 	 */
 	static ino_t dev_null_ino = 0;
 
-	if ((flags && EFILE_DEVICE) == 0) {
+	if (!(flags & EFILE_DEVICE)) {
 	  if (dev_null_ino == 0) {
 	    struct stat nullstatbuf;
 	    

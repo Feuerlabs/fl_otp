@@ -122,10 +122,10 @@
 -define(EFILE_MODE_APPEND,     4).
 -define(EFILE_COMPRESSED,      8).
 -define(EFILE_MODE_EXCL,       16).
--define(EFILE_MODE_DEVICE,     32).
+-define(EFILE_MODE_DEVICE,     64).
 
 %% Use this mask to get just the mode bits to be passed to the driver.
--define(EFILE_MODE_MASK, 31).
+-define(EFILE_MODE_MASK, 127).
 
 %% Seek modes for the driver's seek function.
 -define(EFILE_SEEK_SET, 0).
